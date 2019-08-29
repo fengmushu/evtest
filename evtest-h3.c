@@ -90,6 +90,7 @@ enum evtest_mode {
 	MODE_CAPTURE,
 	MODE_QUERY,
 	MODE_VERSION,
+	MODE_HELP,
 };
 
 static const struct query_mode {
@@ -106,6 +107,7 @@ static const struct query_mode {
 
 static int grab_flag = 0;
 static volatile sig_atomic_t stop = 0;
+static int poweroff_delay = -1;
 
 static void interrupt_handler(int sig)
 {
@@ -827,7 +829,7 @@ static int is_event_device(const struct dirent *dir) {
 static char* scan_devices(void)
 {
 	struct dirent **namelist;
-	int i, ndev, devnum;
+	int i, ndev, devnum, target_dev = -1;
 	char *filename;
 	int max_device = 0;
 
@@ -857,11 +859,20 @@ static char* scan_devices(void)
 		if (devnum > max_device)
 			max_device = devnum;
 
+		/* match the sunxi-gpiokey */
+		if(strstr(name, "gpiokey")) {
+			target_dev = devnum;
+		}
+
 		free(namelist[i]);
 	}
 
-	fprintf(stderr, "Select the device event number [0-%d]: ", max_device);
-	scanf("%d", &devnum);
+	if(target_dev < 0) {
+		fprintf(stderr, "Select the device event number [0-%d]: ", max_device);
+		scanf("%d", &devnum);
+	} else {
+		devnum = target_dev;
+	}
 
 	if (devnum > max_device || devnum < 0)
 		return NULL;
@@ -888,7 +899,7 @@ static int version(void)
  */
 static int usage(void)
 {
-	printf("USAGE:\n");
+	printf("USAGE: -w wait_secs ...\n");
 	printf(" Capture mode:\n");
 	printf("   %s [--grab] /dev/input/eventX\n", program_invocation_short_name);
 	printf("     --grab  grab the device for exclusive access\n");
@@ -1024,6 +1035,30 @@ static int print_device_info(int fd)
 	return 0;
 }
 
+static int do_ev_callback(unsigned int type, unsigned int code, unsigned int val)
+{
+	int re = 0;
+	char cmd[256];
+
+	switch(code) {
+		case KEY_POWER:
+			if(val) {
+				/* KEY_POWER DOWN */
+				if(poweroff_delay < 0) {
+					poweroff_delay = 15; /* default wait sec */
+				}
+				snprintf(cmd, sizeof(cmd), "/usr/bin/poweroff-h3 %d", poweroff_delay);
+				re = system(cmd);
+				printf("%s: return %d\n", __func__, re);
+
+				system("/sbin/poweroff");
+			}
+		default: 
+		break;
+	}
+	return re;
+}
+
 /**
  * Print device events as they come in.
  *
@@ -1074,6 +1109,9 @@ static int print_events(int fd)
 					printf("value %02x\n", ev[i].value);
 				else
 					printf("value %d\n", ev[i].value);
+				if(type == EV_KEY) {
+					do_ev_callback(type, code, ev[i].value);
+				}
 			}
 		}
 
@@ -1248,6 +1286,7 @@ static const struct option long_options[] = {
 	{ "grab", no_argument, &grab_flag, 1 },
 	{ "query", no_argument, NULL, MODE_QUERY },
 	{ "version", no_argument, NULL, MODE_VERSION },
+	{ "help", no_argument, NULL, MODE_HELP },
 	{ 0, },
 };
 
@@ -1260,17 +1299,22 @@ int main (int argc, char **argv)
 
 	while (1) {
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "", long_options, &option_index);
+		int c = getopt_long(argc, argv, "hw:", long_options, &option_index);
 		if (c == -1)
 			break;
 		switch (c) {
 		case 0:
+			break;
+		case 'w':
+			poweroff_delay = atoi(optarg);
 			break;
 		case MODE_QUERY:
 			mode = c;
 			break;
 		case MODE_VERSION:
 			return version();
+		case 'h':
+		case MODE_HELP:
 		default:
 			return usage();
 		}
