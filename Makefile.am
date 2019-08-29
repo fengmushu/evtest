@@ -1,5 +1,5 @@
 
-bin_PROGRAMS = evtest
+bin_PROGRAMS = evtest-h3
 man_pages_src = evtest.txt
 
 EXTRA_DIST = INSTALL
